@@ -535,13 +535,16 @@ export default function App() {
           return;
         }
 
+        // Helper to clean keys (remove quotes/whitespace)
+        const clean = (str) => str ? str.replace(/^"|"$/g, '').trim() : '';
+
         const config = {
-          apiKey: apiKey,
-          authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-          projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-          storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-          messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-          appId: appId
+          apiKey: clean(apiKey),
+          authDomain: clean(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN),
+          projectId: clean(import.meta.env.VITE_FIREBASE_PROJECT_ID),
+          storageBucket: clean(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET),
+          messagingSenderId: clean(import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID),
+          appId: clean(appId)
         };
 
         const app = initializeApp(config);
@@ -693,21 +696,27 @@ export default function App() {
 
       let aiContent = "";
 
+      // Helper to clean keys (remove quotes/whitespace)
+      const cleanKey = (key) => key ? key.replace(/^"|"$/g, '').trim() : '';
+
       // 1. Try Groq (Fast) - Note: May fail due to CORS in browser
       if (modelMode === 'fast') {
-        if (userSettings?.groqKey) {
+        const groqKey = cleanKey(userSettings?.groqKey);
+        const geminiKey = cleanKey(userSettings?.geminiKey);
+
+        if (groqKey) {
           try {
-            aiContent = await callGroqAPI(updatedMessages, userSettings.groqKey);
+            aiContent = await callGroqAPI(updatedMessages, groqKey);
           } catch (e) {
             console.error("Groq Failed:", e);
             // Fallback to Gemini if Groq fails (likely CORS issue)
-            if (userSettings?.geminiKey) {
+            if (geminiKey) {
               console.log("Falling back to Gemini...");
               try {
-                aiContent = await callGeminiAPI(updatedMessages, userSettings.geminiKey);
+                aiContent = await callGeminiAPI(updatedMessages, geminiKey);
               } catch (geminiErr) {
                 console.error("Gemini Fallback Failed:", geminiErr);
-                setError("Fast mode failed. CORS issue - Groq doesn't work from browser. Use Gemini key instead.");
+                setError(`Fast mode failed. Groq CORS error, and Gemini fallback failed: ${geminiErr.message}`);
                 setLoading(false);
                 return;
               }
@@ -717,13 +726,13 @@ export default function App() {
               return;
             }
           }
-        } else if (userSettings?.geminiKey) {
+        } else if (geminiKey) {
           // Use Gemini directly if no Groq key
           try {
-            aiContent = await callGeminiAPI(updatedMessages, userSettings.geminiKey);
+            aiContent = await callGeminiAPI(updatedMessages, geminiKey);
           } catch (e) {
             console.error("Gemini Failed:", e);
-            setError("Failed to get response. Check your Gemini Key in Settings.");
+            setError(`Gemini API Failed: ${e.message}`);
             setLoading(false);
             return;
           }
@@ -735,19 +744,22 @@ export default function App() {
       }
       // 2. Try Deepseek (Deep) - Note: May fail due to CORS in browser
       else if (modelMode === 'deep') {
-        if (userSettings?.deepseekKey) {
+        const deepseekKey = cleanKey(userSettings?.deepseekKey);
+        const geminiKey = cleanKey(userSettings?.geminiKey);
+
+        if (deepseekKey) {
           try {
-            aiContent = await callDeepseekAPI(updatedMessages, userSettings.deepseekKey);
+            aiContent = await callDeepseekAPI(updatedMessages, deepseekKey);
           } catch (e) {
             console.error("Deepseek Failed:", e);
             // Fallback to Gemini if Deepseek fails (likely CORS issue)
-            if (userSettings?.geminiKey) {
+            if (geminiKey) {
               console.log("Falling back to Gemini...");
               try {
-                aiContent = await callGeminiAPI(updatedMessages, userSettings.geminiKey);
+                aiContent = await callGeminiAPI(updatedMessages, geminiKey);
               } catch (geminiErr) {
                 console.error("Gemini Fallback Failed:", geminiErr);
-                setError("Deep mode failed. CORS issue - Deepseek doesn't work from browser. Use Gemini key instead.");
+                setError(`Deep mode failed. Deepseek CORS error, and Gemini fallback failed: ${geminiErr.message}`);
                 setLoading(false);
                 return;
               }
@@ -757,13 +769,13 @@ export default function App() {
               return;
             }
           }
-        } else if (userSettings?.geminiKey) {
+        } else if (geminiKey) {
           // Use Gemini directly if no Deepseek key
           try {
-            aiContent = await callGeminiAPI(updatedMessages, userSettings.geminiKey);
+            aiContent = await callGeminiAPI(updatedMessages, geminiKey);
           } catch (e) {
             console.error("Gemini Failed:", e);
-            setError("Failed to get response. Check your Gemini Key in Settings.");
+            setError(`Gemini API Failed: ${e.message}`);
             setLoading(false);
             return;
           }
