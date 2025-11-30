@@ -63,6 +63,12 @@ const QUOTES = [
   "Feelings are something you have; not something you are.",
   "This too shall pass.",
   "Be kind to your mind.",
+  "What you think, you become.",
+  "Happiness depends upon ourselves.",
+  "Turn your wounds into wisdom.",
+  "Every moment is a fresh beginning.",
+  "Believe you can and you're halfway there.",
+  "You are enough just as you are."
 ];
 
 // --- Helper Functions ---
@@ -230,7 +236,7 @@ const InsightsView = ({ logs }) => {
           </LineChart>
         </ResponsiveContainer>
       </div>
-      <div className="mt-6 bg-white/10 rounded-xl p-4">
+      <div className="mt-6 glass-card p-4 rounded-xl">
         <h3 className="font-medium text-white mb-2">AI Insight</h3>
         <p className="text-sm text-white/70">
           {data.length > 3
@@ -266,6 +272,7 @@ export default function App() {
   const [isLocked, setIsLocked] = useState(false);
   const [pin, setPin] = useState(localStorage.getItem('reflect_pin'));
   const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   const messagesEndRef = useRef(null);
 
@@ -285,22 +292,97 @@ export default function App() {
 
   // Daily Quote & Check-in Logic
   useEffect(() => {
-    setDailyQuote(QUOTES[Math.floor(Math.random() * QUOTES.length)]);
-  }, []);
+    const fetchDailyQuote = async () => {
+      const today = new Date().toDateString();
+      const storedQuoteData = localStorage.getItem('reflect_daily_quote');
+
+      if (storedQuoteData) {
+        const { date, quote } = JSON.parse(storedQuoteData);
+        if (date === today) {
+          setDailyQuote(quote);
+          return;
+        }
+      }
+
+      // Fallback first
+      const randomQuote = QUOTES[Math.floor(Math.random() * QUOTES.length)];
+      setDailyQuote(randomQuote);
+
+      // Try to get AI quote if we have mood data
+      if (moodLogs.length > 0 && !demoMode) {
+        try {
+          const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+          if (!apiKey) return;
+
+          const recentMoods = moodLogs.slice(0, 3).map(l => l.mood.label).join(', ');
+          const prompt = `Generate a short, inspiring quote (max 15 words) for someone who has been feeling: ${recentMoods}. Return ONLY the quote text.`;
+
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }]
+            })
+          });
+
+          const data = await response.json();
+          const aiQuote = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+
+          if (aiQuote) {
+            setDailyQuote(aiQuote);
+            localStorage.setItem('reflect_daily_quote', JSON.stringify({ date: today, quote: aiQuote }));
+          }
+        } catch (e) {
+          console.error("Failed to fetch AI quote", e);
+        }
+      } else {
+        localStorage.setItem('reflect_daily_quote', JSON.stringify({ date: today, quote: randomQuote }));
+      }
+    };
+
+    fetchDailyQuote();
+  }, [moodLogs, demoMode]);
 
   useEffect(() => {
-    if (moodLogs.length > 0) {
-      const lastLog = moodLogs[0];
-      const lastDate = lastLog.timestamp.toDate ? lastLog.timestamp.toDate() : new Date(lastLog.timestamp);
-      if (!isSameDay(lastDate, new Date())) {
-        setShowDailyCheckin(true);
-      } else {
+    const checkDailyStatus = () => {
+      const lastDismissed = localStorage.getItem('reflect_last_dismissed');
+      const isDismissedToday = lastDismissed && isSameDay(new Date(lastDismissed), new Date());
+
+      if (isDismissedToday) {
         setShowDailyCheckin(false);
+        return;
       }
-    } else if (user) {
-      setShowDailyCheckin(true);
-    }
+
+      let shouldCheckIn = false;
+      if (moodLogs.length > 0) {
+        const lastLog = moodLogs[0];
+        const lastDate = lastLog.timestamp.toDate ? lastLog.timestamp.toDate() : new Date(lastLog.timestamp);
+        if (!isSameDay(lastDate, new Date())) {
+          shouldCheckIn = true;
+        }
+      } else if (user) {
+        shouldCheckIn = true;
+      }
+
+      setShowDailyCheckin(shouldCheckIn);
+
+      // Local Notification
+      if (shouldCheckIn && Notification.permission === "granted") {
+        const lastNotified = localStorage.getItem('reflect_last_notified');
+        if (!lastNotified || !isSameDay(new Date(lastNotified), new Date())) {
+          new Notification("Reflect", { body: "Time to check in with yourself." });
+          localStorage.setItem('reflect_last_notified', new Date().toISOString());
+        }
+      }
+    };
+
+    checkDailyStatus();
   }, [moodLogs, user]);
+
+  const dismissCheckin = () => {
+    setShowDailyCheckin(false);
+    localStorage.setItem('reflect_last_dismissed', new Date().toISOString());
+  };
 
   // Initialize Firebase & Auth
   useEffect(() => {
@@ -582,11 +664,25 @@ export default function App() {
   const speakMessage = (text) => {
     if (window.speechSynthesis.speaking) {
       window.speechSynthesis.cancel();
-      return;
     }
     const utterance = new SpeechSynthesisUtterance(text);
+    utterance.onstart = () => setIsSpeaking(true);
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
     window.speechSynthesis.speak(utterance);
   };
+
+  const stopSpeaking = () => {
+    window.speechSynthesis.cancel();
+    setIsSpeaking(false);
+  };
+
+  // Cleanup speech on unmount
+  useEffect(() => {
+    return () => {
+      window.speechSynthesis.cancel();
+    };
+  }, []);
 
   const handleSetPin = (newPin) => {
     localStorage.setItem('reflect_pin', newPin);
@@ -599,17 +695,19 @@ export default function App() {
     else alert("Incorrect PIN");
   };
 
-  const requestNotification = () => {
+  const requestNotification = async () => {
     if (!("Notification" in window)) {
       alert("This browser does not support desktop notification");
-    } else if (Notification.permission === "granted") {
-      new Notification("Reflect: Time to check in!", { body: "How are you feeling right now?" });
-    } else if (Notification.permission !== "denied") {
-      Notification.requestPermission().then(permission => {
-        if (permission === "granted") {
-          new Notification("Reflect: Notifications enabled!");
-        }
-      });
+      return;
+    }
+
+    let permission = Notification.permission;
+    if (permission !== 'granted' && permission !== 'denied') {
+      permission = await Notification.requestPermission();
+    }
+
+    if (permission === "granted") {
+      new Notification("Reflect", { body: "Notifications enabled! We'll remind you to check in." });
     }
   };
 
@@ -635,13 +733,13 @@ export default function App() {
             <h1 className="text-2xl font-bold tracking-tight text-white drop-shadow-sm">{APP_NAME}</h1>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={requestNotification} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+            <button onClick={requestNotification} className="glass-icon-button">
               <Bell className="w-4 h-4 text-white/70" />
             </button>
             {!pin && (
               <button
                 onClick={() => setView('lock_setup')}
-                className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                className="glass-icon-button"
                 title="Set PIN"
               >
                 <Unlock className="w-4 h-4 text-white/70" />
@@ -650,7 +748,7 @@ export default function App() {
             {pin && (
               <button
                 onClick={() => setIsLocked(true)}
-                className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                className="glass-icon-button"
                 title="Lock App"
               >
                 <Lock className="w-4 h-4 text-white/70" />
@@ -718,19 +816,27 @@ export default function App() {
                       <p className="text-sm mt-2 max-w-[200px]">I'm here to help you work through your thoughts.</p>
 
                       {/* Daily Quote */}
-                      <div className="mt-8 p-4 bg-white/5 rounded-xl border border-white/10 max-w-xs">
+                      <div className="mt-8 p-4 glass-card rounded-xl max-w-xs">
                         <p className="text-xs font-serif italic text-white/80">"{dailyQuote}"</p>
                       </div>
 
                       {/* Daily Check-in Prompt */}
                       {showDailyCheckin && (
-                        <button
-                          onClick={() => setView('mood')}
-                          className="mt-6 px-4 py-2 bg-indigo-500/80 hover:bg-indigo-500 text-white text-sm rounded-full transition-colors flex items-center gap-2"
-                        >
-                          <Activity className="w-4 h-4" />
-                          Log your daily mood
-                        </button>
+                        <div className="mt-6 flex flex-col gap-2 w-full max-w-xs animate-in fade-in slide-in-from-bottom-4 duration-700">
+                          <button
+                            onClick={() => setView('mood')}
+                            className="w-full px-4 py-3 bg-indigo-500/80 hover:bg-indigo-500 text-white text-sm rounded-xl transition-colors flex items-center justify-center gap-2 shadow-lg backdrop-blur-sm"
+                          >
+                            <Activity className="w-4 h-4" />
+                            Log your daily mood
+                          </button>
+                          <button
+                            onClick={dismissCheckin}
+                            className="text-xs text-white/40 hover:text-white/60 transition-colors py-1"
+                          >
+                            Dismiss for today
+                          </button>
+                        </div>
                       )}
                     </div>
                   )}
@@ -769,7 +875,7 @@ export default function App() {
                   <div className="flex gap-2">
                     <button
                       onClick={handleNewSession}
-                      className="p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 transition-colors"
+                      className="p-3 rounded-xl glass-button text-white/70"
                     >
                       <Plus className="w-5 h-5" />
                     </button>
@@ -787,12 +893,28 @@ export default function App() {
                       className={`p-3 rounded-xl border border-white/10 transition-colors ${isListening ? 'bg-red-500/50 text-white animate-pulse' : 'bg-white/5 text-white/70 hover:bg-white/10'
                         }`}
                     >
-                      {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                      {isListening ? (
+                        <div className="relative">
+                          <span className="absolute inset-0 rounded-xl bg-red-500/50 animate-ping"></span>
+                          <MicOff className="w-5 h-5 relative z-10" />
+                        </div>
+                      ) : (
+                        <Mic className="w-5 h-5" />
+                      )}
                     </button>
+                    {isSpeaking && (
+                      <button
+                        onClick={stopSpeaking}
+                        className="p-3 rounded-xl bg-red-500/20 hover:bg-red-500/40 border border-red-500/30 text-red-100 transition-colors animate-pulse"
+                        title="Stop Speaking"
+                      >
+                        <Volume2 className="w-5 h-5" />
+                      </button>
+                    )}
                     <button
                       onClick={handleSendMessage}
                       disabled={!inputText.trim() || loading}
-                      className="p-3 rounded-xl bg-white/20 hover:bg-white/30 border border-white/30 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg"
+                      className="p-3 rounded-xl glass-button text-white shadow-lg"
                     >
                       <Send className="w-5 h-5" />
                     </button>
