@@ -606,7 +606,20 @@ export default function App() {
 
   // Load User Settings
   useEffect(() => {
-    if (demoMode || !user || !db) return;
+    if (demoMode) {
+      // In Demo Mode, load from localStorage
+      const stored = localStorage.getItem('reflect_user_settings');
+      if (stored) {
+        try {
+          setUserSettings(JSON.parse(stored));
+        } catch (e) {
+          console.error("Failed to parse stored settings:", e);
+        }
+      }
+      return;
+    }
+
+    if (!user || !db) return;
     const appId = import.meta.env.VITE_FIREBASE_APP_ID;
     const userId = user.uid;
     const settingsRef = doc(db, `artifacts/${appId}/users/${userId}/user_settings/keys`);
@@ -625,6 +638,22 @@ export default function App() {
   const handleSaveSettings = async (newSettings) => {
     if (!user) return;
     setLoading(true);
+
+    if (demoMode) {
+      // In Demo Mode, save to localStorage
+      try {
+        localStorage.setItem('reflect_user_settings', JSON.stringify(newSettings));
+        setUserSettings(newSettings);
+        alert("Settings saved successfully! (Demo Mode - stored locally)");
+      } catch (err) {
+        console.error("Save Settings Error (Demo):", err);
+        setError("Failed to save settings.");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     try {
       const appId = import.meta.env.VITE_FIREBASE_APP_ID;
       const userId = user.uid;
