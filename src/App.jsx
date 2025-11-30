@@ -860,407 +860,449 @@ export default function App() {
         model: 'deepseek-chat',
         messages: [
           { role: 'system', content: SYSTEM_INSTRUCTION },
-          setLoading(false);
-        return;
-      }
-
-    try {
-        const appId = import.meta.env.VITE_FIREBASE_APP_ID;
-        const userId = user.uid;
-        const currentRef = doc(db, `artifacts/${appId}/users/${userId}/cbt_sessions/current_session`);
-        const archiveRef = collection(db, `artifacts/${appId}/users/${userId}/archived_cbt_sessions`);
-
-        if(messages.length > 0) {
-          await addDoc(archiveRef, {
-            history: messages,
-            archivedAt: serverTimestamp()
-          });
-  }
-
-  await setDoc(currentRef, { history: [] });
-  setMessages([]);
-
-} catch (err) {
-  console.error("New Session Error:", err);
-  setError("Failed to start new session.");
-} finally {
-  setLoading(false);
-}
+          ...messages
+        ],
+        temperature: 0.7
+      })
+    });
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content;
   };
 
-const handleSaveMood = async () => {
-  if (!selectedMood || !moodCaption.trim() || !user) return;
-
-  setLoading(true);
-
-  if (demoMode) {
-    const newLog = {
-      id: Date.now().toString(),
-      mood: selectedMood,
-      caption: moodCaption,
-      timestamp: new Date()
-    };
-    setMoodLogs([newLog, ...moodLogs]);
-    setMoodCaption('');
-    setSelectedMood(null);
-    setView('mood');
-    setLoading(false);
-    return;
-  }
-
-  try {
-    const appId = import.meta.env.VITE_FIREBASE_APP_ID;
-    const userId = user.uid;
-    const moodRef = collection(db, `artifacts/${appId}/users/${userId}/mood_logs`);
-
-    await addDoc(moodRef, {
-      mood: selectedMood,
-      caption: moodCaption,
-      timestamp: serverTimestamp()
+  const callGeminiAPI = async (messages, apiKey) => {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          { role: 'user', parts: [{ text: SYSTEM_INSTRUCTION }] },
+          ...messages.map(m => ({
+            role: m.role === 'user' ? 'user' : 'model',
+            parts: [{ text: m.content }]
+          }))
+        ]
+      })
     });
 
-    setMoodCaption('');
-    setSelectedMood(null);
-    setView('mood');
-  } catch (err) {
-    console.error("Save Mood Error:", err);
-    setError("Failed to save mood log.");
-  } finally {
-    setLoading(false);
-  }
-};
+    const data = await response.json();
 
-// V2 Feature Actions
-const toggleListening = () => {
-  if (!('webkitSpeechRecognition' in window)) {
-    alert("Speech recognition not supported in this browser.");
-    return;
-  }
+    if (!data.candidates || !data.candidates[0]) {
+      console.error("Gemini API Error Response:", data);
+      throw new Error(data.error?.message || "Invalid response from Gemini API");
+    }
 
-  if (isListening) {
-    setIsListening(false);
-    // Stop logic handled by recognition.onend
-  } else {
-    setIsListening(true);
-    const recognition = new window.webkitSpeechRecognition();
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.lang = 'en-US';
-
-    recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      setInputText(prev => prev + (prev ? ' ' : '') + transcript);
-      setIsListening(false);
-    };
-
-    recognition.onerror = () => setIsListening(false);
-    recognition.onend = () => setIsListening(false);
-
-    recognition.start();
-  }
-};
-
-const speakMessage = (text) => {
-  if (window.speechSynthesis.speaking) {
-    window.speechSynthesis.cancel();
-  }
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.onstart = () => setIsSpeaking(true);
-  utterance.onend = () => setIsSpeaking(false);
-  utterance.onerror = () => setIsSpeaking(false);
-  window.speechSynthesis.speak(utterance);
-};
-
-const stopSpeaking = () => {
-  window.speechSynthesis.cancel();
-  setIsSpeaking(false);
-};
-
-// Cleanup speech on unmount
-useEffect(() => {
-  return () => {
-    window.speechSynthesis.cancel();
+    return data.candidates[0].content.parts[0].text;
   };
-}, []);
 
-const handleSetPin = (newPin) => {
-  localStorage.setItem('reflect_pin', newPin);
-  setPin(newPin);
-  setIsLocked(false);
-};
+  const handleNewSession = async () => {
+    if (!user) return;
+    if (!confirm("Start a new session? Current chat will be archived.")) return;
 
-const handleUnlock = (inputPin) => {
-  if (inputPin === pin) setIsLocked(false);
-  else alert("Incorrect PIN");
-};
+    setLoading(true);
 
-const requestNotification = async () => {
-  if (!("Notification" in window)) {
-    alert("This browser does not support desktop notification");
-    return;
-  }
+    if (demoMode) {
+      setMessages([]);
+      setLoading(false);
+      return;
+    }
 
-  let permission = Notification.permission;
-  if (permission !== 'granted' && permission !== 'denied') {
-    permission = await Notification.requestPermission();
-  }
+    try {
+      const appId = import.meta.env.VITE_FIREBASE_APP_ID;
+      const userId = user.uid;
+      const currentRef = doc(db, `artifacts/${appId}/users/${userId}/cbt_sessions/current_session`);
+      const archiveRef = collection(db, `artifacts/${appId}/users/${userId}/archived_cbt_sessions`);
 
-  if (permission === "granted") {
-    new Notification("Reflect", { body: "Notifications enabled! We'll remind you to check in." });
-  }
-};
+      if (messages.length > 0) {
+        await addDoc(archiveRef, {
+          history: messages,
+          archivedAt: serverTimestamp()
+        });
+      }
 
-// --- Render ---
+      await setDoc(currentRef, { history: [] });
+      setMessages([]);
 
-if (authLoading) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white"><Loader2 className="animate-spin" /></div>;
+    } catch (err) {
+      console.error("New Session Error:", err);
+      setError("Failed to start new session.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-if (isLocked) return <LockScreen onUnlock={handleUnlock} isSettingUp={false} />;
+  const handleSaveMood = async () => {
+    if (!selectedMood || !moodCaption.trim() || !user) return;
 
-return (
-  <div className="min-h-screen bg-gradient-to-br from-indigo-500/80 to-purple-400/80 text-white font-sans selection:bg-pink-500/30">
-    <div className="max-w-md mx-auto h-screen flex flex-col p-4 relative">
+    setLoading(true);
 
-      {/* Header */}
-      <header className="flex items-center justify-between mb-6 pt-2">
-        <div className="flex items-center gap-3">
-          <div className="relative w-10 h-10">
-            <div className="absolute inset-0 bg-white/30 rounded-full blur-sm"></div>
-            <div className="relative bg-white/20 backdrop-blur-md rounded-full w-full h-full flex items-center justify-center border border-white/40 shadow-lg">
-              <span className="text-xl font-bold bg-gradient-to-br from-white to-white/70 bg-clip-text text-transparent">R</span>
-            </div>
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white drop-shadow-sm">{APP_NAME}</h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={requestNotification} className="glass-icon-button">
-            <Bell className="w-4 h-4 text-white/70" />
-          </button>
-          {!pin && (
-            <button
-              onClick={() => setView('lock_setup')}
-              className="glass-icon-button"
-              title="Set PIN"
-            >
-              <Unlock className="w-4 h-4 text-white/70" />
-            </button>
-          )}
-          {pin && (
-            <button
-              onClick={() => setIsLocked(true)}
-              className="glass-icon-button"
-              title="Lock App"
-            >
-              <Lock className="w-4 h-4 text-white/70" />
-            </button>
-          )}
-        </div>
-      </header>
+    if (demoMode) {
+      const newLog = {
+        id: Date.now().toString(),
+        mood: selectedMood,
+        caption: moodCaption,
+        timestamp: new Date()
+      };
+      setMoodLogs([newLog, ...moodLogs]);
+      setMoodCaption('');
+      setSelectedMood(null);
+      setView('mood');
+      setLoading(false);
+      return;
+    }
 
-      {/* Error Alert */}
-      {error && (
-        <div className="mb-4 p-3 bg-red-500/20 backdrop-blur-md border border-red-500/30 rounded-xl flex items-center gap-2 text-sm text-red-100">
-          <AlertCircle className="w-4 h-4" />
-          <span className="flex-1">{error}</span>
-          <button onClick={() => setError(null)} className="hover:bg-red-500/20 p-1 rounded-full">×</button>
-        </div>
-      )}
+    try {
+      const appId = import.meta.env.VITE_FIREBASE_APP_ID;
+      const userId = user.uid;
+      const moodRef = collection(db, `artifacts/${appId}/users/${userId}/mood_logs`);
 
-      {/* Main Content Area */}
-      <main className="flex-1 overflow-hidden flex flex-col relative z-10">
+      await addDoc(moodRef, {
+        mood: selectedMood,
+        caption: moodCaption,
+        timestamp: serverTimestamp()
+      });
 
-        {/* View Switcher */}
-        <div className="flex p-1 bg-black/10 backdrop-blur-md rounded-2xl mb-4 border border-white/10 overflow-x-auto">
-          {[
-            { id: 'coach', icon: MessageSquare, label: 'Coach' },
-            { id: 'mood', icon: Activity, label: 'Mood' },
-            { id: 'settings', icon: Settings, label: 'Settings' }
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setView(tab.id)}
-              className={`flex-1 min-w-[80px] flex flex-col items-center justify-center gap-1 py-2 rounded-xl text-[10px] font-medium transition-all duration-300 ${view === tab.id
-                ? 'bg-white/20 text-white shadow-lg border border-white/20'
-                : 'text-white/60 hover:bg-white/5'
-                }`}
-            >
-              <tab.icon className="w-4 h-4" />
-              {tab.label}
-            </button>
-          ))}
-        </div>
+      setMoodCaption('');
+      setSelectedMood(null);
+      setView('mood');
+    } catch (err) {
+      console.error("Save Mood Error:", err);
+      setError("Failed to save mood log.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-        {/* Views */}
-        <div className="flex-1 overflow-hidden relative glass-panel rounded-3xl flex flex-col">
+  // V2 Feature Actions
+  const toggleListening = () => {
+    if (!('webkitSpeechRecognition' in window)) {
+      alert("Speech recognition not supported in this browser.");
+      return;
+    }
 
-          {view === 'lock_setup' && (
-            <div className="absolute inset-0 z-20">
-              <LockScreen onUnlock={handleSetPin} isSettingUp={true} />
-            </div>
-          )}
+    if (isListening) {
+      setIsListening(false);
+      // Stop logic handled by recognition.onend
+    } else {
+      setIsListening(true);
+      const recognition = new window.webkitSpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
 
-          {view === 'settings' && (
-            <SettingsView settings={userSettings} onSave={handleSaveSettings} loading={loading} />
-          )}
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        setInputText(prev => prev + (prev ? ' ' : '') + transcript);
+        setIsListening(false);
+      };
 
-          {view === 'coach' && (
-            <div className="flex flex-col h-full">
-              {/* Model Selector */}
-              <div className="flex items-center justify-center p-2 border-b border-white/10">
-                <div className="flex bg-black/20 rounded-lg p-1">
-                  <button
-                    onClick={() => setModelMode('fast')}
-                    className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${modelMode === 'fast' ? 'bg-white/20 text-white shadow-sm' : 'text-white/50 hover:text-white/80'}`}
-                  >
-                    Fast (Groq)
-                  </button>
-                  <button
-                    onClick={() => setModelMode('deep')}
-                    className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${modelMode === 'deep' ? 'bg-white/20 text-white shadow-sm' : 'text-white/50 hover:text-white/80'}`}
-                  >
-                    Deep (Deepseek)
-                  </button>
-                </div>
+      recognition.onerror = () => setIsListening(false);
+      recognition.onend = () => setIsListening(false);
+
+      recognition.start();
+    }
+  };
+
+  const speakMessage = (text) => {
+    if (window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+    }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.onstart = () => setIsSpeaking(true);
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const stopSpeaking = () => {
+    window.speechSynthesis.cancel();
+    setIsSpeaking(false);
+  };
+
+  // Cleanup speech on unmount
+  useEffect(() => {
+    return () => {
+      window.speechSynthesis.cancel();
+    };
+  }, []);
+
+  const handleSetPin = (newPin) => {
+    localStorage.setItem('reflect_pin', newPin);
+    setPin(newPin);
+    setIsLocked(false);
+  };
+
+  const handleUnlock = (inputPin) => {
+    if (inputPin === pin) setIsLocked(false);
+    else alert("Incorrect PIN");
+  };
+
+  const requestNotification = async () => {
+    if (!("Notification" in window)) {
+      alert("This browser does not support desktop notification");
+      return;
+    }
+
+    let permission = Notification.permission;
+    if (permission !== 'granted' && permission !== 'denied') {
+      permission = await Notification.requestPermission();
+    }
+
+    if (permission === "granted") {
+      new Notification("Reflect", { body: "Notifications enabled! We'll remind you to check in." });
+    }
+  };
+
+  // --- Render ---
+
+  if (authLoading) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white"><Loader2 className="animate-spin" /></div>;
+
+  if (isLocked) return <LockScreen onUnlock={handleUnlock} isSettingUp={false} />;
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-indigo-500/80 to-purple-400/80 text-white font-sans selection:bg-pink-500/30">
+      <div className="max-w-md mx-auto h-screen flex flex-col p-4 relative">
+
+        {/* Header */}
+        <header className="flex items-center justify-between mb-6 pt-2">
+          <div className="flex items-center gap-3">
+            <div className="relative w-10 h-10">
+              <div className="absolute inset-0 bg-white/30 rounded-full blur-sm"></div>
+              <div className="relative bg-white/20 backdrop-blur-md rounded-full w-full h-full flex items-center justify-center border border-white/40 shadow-lg">
+                <span className="text-xl font-bold bg-gradient-to-br from-white to-white/70 bg-clip-text text-transparent">R</span>
               </div>
+            </div>
+            <h1 className="text-2xl font-bold tracking-tight text-white drop-shadow-sm">{APP_NAME}</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={requestNotification} className="glass-icon-button">
+              <Bell className="w-4 h-4 text-white/70" />
+            </button>
+            {!pin && (
+              <button
+                onClick={() => setView('lock_setup')}
+                className="glass-icon-button"
+                title="Set PIN"
+              >
+                <Unlock className="w-4 h-4 text-white/70" />
+              </button>
+            )}
+            {pin && (
+              <button
+                onClick={() => setIsLocked(true)}
+                className="glass-icon-button"
+                title="Lock App"
+              >
+                <Lock className="w-4 h-4 text-white/70" />
+              </button>
+            )}
+          </div>
+        </header>
 
-              {/* Chat Area */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                {messages.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center opacity-60">
-                    <MessageSquare className="w-12 h-12 mb-4 text-white/40" />
-                    <p className="text-lg font-medium">How are you feeling?</p>
-                    <p className="text-sm">I'm here to listen and help.</p>
+        {/* Error Alert */}
+        {error && (
+          <div className="mb-4 p-3 bg-red-500/20 backdrop-blur-md border border-red-500/30 rounded-xl flex items-center gap-2 text-sm text-red-100">
+            <AlertCircle className="w-4 h-4" />
+            <span className="flex-1">{error}</span>
+            <button onClick={() => setError(null)} className="hover:bg-red-500/20 p-1 rounded-full">×</button>
+          </div>
+        )}
+
+        {/* Main Content Area */}
+        <main className="flex-1 overflow-hidden flex flex-col relative z-10">
+
+          {/* View Switcher */}
+          <div className="flex p-1 bg-black/10 backdrop-blur-md rounded-2xl mb-4 border border-white/10 overflow-x-auto">
+            {[
+              { id: 'coach', icon: MessageSquare, label: 'Coach' },
+              { id: 'mood', icon: Activity, label: 'Mood' },
+              { id: 'settings', icon: Settings, label: 'Settings' }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setView(tab.id)}
+                className={`flex-1 min-w-[80px] flex flex-col items-center justify-center gap-1 py-2 rounded-xl text-[10px] font-medium transition-all duration-300 ${view === tab.id
+                  ? 'bg-white/20 text-white shadow-lg border border-white/20'
+                  : 'text-white/60 hover:bg-white/5'
+                  }`}
+              >
+                <tab.icon className="w-4 h-4" />
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Views */}
+          <div className="flex-1 overflow-hidden relative glass-panel rounded-3xl flex flex-col">
+
+            {view === 'lock_setup' && (
+              <div className="absolute inset-0 z-20">
+                <LockScreen onUnlock={handleSetPin} isSettingUp={true} />
+              </div>
+            )}
+
+            {view === 'settings' && (
+              <SettingsView settings={userSettings} onSave={handleSaveSettings} loading={loading} />
+            )}
+
+            {view === 'coach' && (
+              <div className="flex flex-col h-full">
+                {/* Model Selector */}
+                <div className="flex items-center justify-center p-2 border-b border-white/10">
+                  <div className="flex bg-black/20 rounded-lg p-1">
+                    <button
+                      onClick={() => setModelMode('fast')}
+                      className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${modelMode === 'fast' ? 'bg-white/20 text-white shadow-sm' : 'text-white/50 hover:text-white/80'}`}
+                    >
+                      Fast (Groq)
+                    </button>
+                    <button
+                      onClick={() => setModelMode('deep')}
+                      className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${modelMode === 'deep' ? 'bg-white/20 text-white shadow-sm' : 'text-white/50 hover:text-white/80'}`}
+                    >
+                      Deep (Deepseek)
+                    </button>
                   </div>
-                ) : (
-                  messages.map((msg, idx) => (
-                    <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[80%] p-3 rounded-2xl ${msg.role === 'user'
-                        ? 'bg-indigo-500/80 text-white rounded-br-none'
-                        : 'bg-white/10 backdrop-blur-md text-white/90 rounded-bl-none'
-                        }`}>
-                        {msg.content}
+                </div>
+
+                {/* Chat Area */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {messages.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center opacity-60">
+                      <MessageSquare className="w-12 h-12 mb-4 text-white/40" />
+                      <p className="text-lg font-medium">How are you feeling?</p>
+                      <p className="text-sm">I'm here to listen and help.</p>
+                    </div>
+                  ) : (
+                    messages.map((msg, idx) => (
+                      <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[80%] p-3 rounded-2xl ${msg.role === 'user'
+                          ? 'bg-indigo-500/80 text-white rounded-br-none'
+                          : 'bg-white/10 backdrop-blur-md text-white/90 rounded-bl-none'
+                          }`}>
+                          {msg.content}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                  {loading && (
+                    <div className="flex justify-start">
+                      <div className="bg-white/10 backdrop-blur-md p-3 rounded-2xl rounded-bl-none flex gap-2 items-center">
+                        <div className="w-2 h-2 bg-white/50 rounded-full animate-bounce" />
+                        <div className="w-2 h-2 bg-white/50 rounded-full animate-bounce delay-100" />
+                        <div className="w-2 h-2 bg-white/50 rounded-full animate-bounce delay-200" />
                       </div>
                     </div>
-                  ))
-                )}
-                {loading && (
-                  <div className="flex justify-start">
-                    <div className="bg-white/10 backdrop-blur-md p-3 rounded-2xl rounded-bl-none flex gap-2 items-center">
-                      <div className="w-2 h-2 bg-white/50 rounded-full animate-bounce" />
-                      <div className="w-2 h-2 bg-white/50 rounded-full animate-bounce delay-100" />
-                      <div className="w-2 h-2 bg-white/50 rounded-full animate-bounce delay-200" />
-                    </div>
-                  </div>
-                )}
-                <div ref={messagesEndRef} />
-              </div>
+                  )}
+                  <div ref={messagesEndRef} />
+                </div>
 
-              {/* Input Area */}
-              <div className="p-4 bg-black/10 backdrop-blur-md border-t border-white/10">
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleNewSession}
-                    className="glass-icon-button"
-                    title="New Session"
-                  >
-                    <Plus className="w-5 h-5" />
-                  </button>
-                  <div className="flex-1 relative">
-                    <input
-                      type="text"
-                      value={inputText}
-                      onChange={(e) => setInputText(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                      placeholder="Type a message..."
-                      className="w-full glass-input h-10 pl-4 pr-10 rounded-full text-sm"
-                      disabled={loading}
+                {/* Input Area */}
+                <div className="p-4 bg-black/10 backdrop-blur-md border-t border-white/10">
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleNewSession}
+                      className="glass-icon-button"
+                      title="New Session"
+                    >
+                      <Plus className="w-5 h-5" />
+                    </button>
+                    <div className="flex-1 relative">
+                      <input
+                        type="text"
+                        value={inputText}
+                        onChange={(e) => setInputText(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                        placeholder="Type a message..."
+                        className="w-full glass-input h-10 pl-4 pr-10 rounded-full text-sm"
+                        disabled={loading}
+                      />
+                      <button
+                        onClick={toggleListening}
+                        className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full transition-colors ${isListening ? 'bg-red-500/50 text-white' : 'hover:bg-white/10 text-white/60'
+                          }`}
+                      >
+                        {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                    <button
+                      onClick={handleSendMessage}
+                      disabled={loading || !inputText.trim()}
+                      className="glass-button w-10 h-10 rounded-full flex items-center justify-center disabled:opacity-50"
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {view === 'breathing' && <BreathingExercise />}
+
+            {view === 'insights' && <InsightsView logs={moodLogs} />}
+
+
+
+            {view === 'mood' && (
+              <div className="flex flex-col h-full">
+                <div className="p-6 border-b border-white/10 bg-white/5 backdrop-blur-sm">
+                  <h2 className="text-lg font-medium mb-4 text-white/90">How are you feeling?</h2>
+
+                  <div className="flex justify-between mb-6">
+                    {MOODS.map((m) => (
+                      <button
+                        key={m.label}
+                        onClick={() => setSelectedMood(m)}
+                        className={`flex flex-col items-center gap-2 transition-all duration-300 ${selectedMood?.label === m.label
+                          ? 'transform scale-110 opacity-100'
+                          : 'opacity-60 hover:opacity-100 hover:scale-105'
+                          }`}
+                      >
+                        <span className="text-3xl drop-shadow-md filter">{m.emoji}</span>
+                        <span className="text-[10px] font-medium uppercase tracking-wider">{m.label}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="space-y-3">
+                    <textarea
+                      value={moodCaption}
+                      onChange={(e) => setMoodCaption(e.target.value)}
+                      placeholder="Why do you feel this way?"
+                      className="w-full h-24 bg-black/10 border border-white/10 rounded-xl p-3 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-white/20 resize-none"
                     />
                     <button
-                      onClick={toggleListening}
-                      className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full transition-colors ${isListening ? 'bg-red-500/50 text-white' : 'hover:bg-white/10 text-white/60'
-                        }`}
+                      onClick={handleSaveMood}
+                      disabled={!selectedMood || !moodCaption.trim() || loading}
+                      className="w-full py-3 bg-white/20 hover:bg-white/25 border border-white/30 rounded-xl font-medium shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                      {loading ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : 'Log Mood'}
                     </button>
                   </div>
-                  <button
-                    onClick={handleSendMessage}
-                    disabled={loading || !inputText.trim()}
-                    className="glass-button w-10 h-10 rounded-full flex items-center justify-center disabled:opacity-50"
-                  >
-                    <Send className="w-4 h-4" />
-                  </button>
                 </div>
-              </div>
-            </div>
-          )}
 
-          {view === 'breathing' && <BreathingExercise />}
-
-          {view === 'insights' && <InsightsView logs={moodLogs} />}
-
-
-
-          {view === 'mood' && (
-            <div className="flex flex-col h-full">
-              <div className="p-6 border-b border-white/10 bg-white/5 backdrop-blur-sm">
-                <h2 className="text-lg font-medium mb-4 text-white/90">How are you feeling?</h2>
-
-                <div className="flex justify-between mb-6">
-                  {MOODS.map((m) => (
-                    <button
-                      key={m.label}
-                      onClick={() => setSelectedMood(m)}
-                      className={`flex flex-col items-center gap-2 transition-all duration-300 ${selectedMood?.label === m.label
-                        ? 'transform scale-110 opacity-100'
-                        : 'opacity-60 hover:opacity-100 hover:scale-105'
-                        }`}
-                    >
-                      <span className="text-3xl drop-shadow-md filter">{m.emoji}</span>
-                      <span className="text-[10px] font-medium uppercase tracking-wider">{m.label}</span>
-                    </button>
+                <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-hide">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-white/40 mb-2 px-1">Recent Logs</h3>
+                  {moodLogs.map((log) => (
+                    <div key={log.id} className="glass-card rounded-xl p-4">
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-2xl">{log.mood.emoji}</span>
+                          <span className="font-medium text-sm">{log.mood.label}</span>
+                        </div>
+                        <span className="text-xs text-white/40 font-mono">
+                          {formatTime(log.timestamp)}
+                        </span>
+                      </div>
+                      <p className="text-sm text-white/70 leading-relaxed">{log.caption}</p>
+                    </div>
                   ))}
                 </div>
-
-                <div className="space-y-3">
-                  <textarea
-                    value={moodCaption}
-                    onChange={(e) => setMoodCaption(e.target.value)}
-                    placeholder="Why do you feel this way?"
-                    className="w-full h-24 bg-black/10 border border-white/10 rounded-xl p-3 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-white/20 resize-none"
-                  />
-                  <button
-                    onClick={handleSaveMood}
-                    disabled={!selectedMood || !moodCaption.trim() || loading}
-                    className="w-full py-3 bg-white/20 hover:bg-white/25 border border-white/30 rounded-xl font-medium shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {loading ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : 'Log Mood'}
-                  </button>
-                </div>
               </div>
+            )}
 
-              <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-hide">
-                <h3 className="text-xs font-bold uppercase tracking-widest text-white/40 mb-2 px-1">Recent Logs</h3>
-                {moodLogs.map((log) => (
-                  <div key={log.id} className="glass-card rounded-xl p-4">
-                    <div className="flex justify-between items-start mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-2xl">{log.mood.emoji}</span>
-                        <span className="font-medium text-sm">{log.mood.label}</span>
-                      </div>
-                      <span className="text-xs text-white/40 font-mono">
-                        {formatTime(log.timestamp)}
-                      </span>
-                    </div>
-                    <p className="text-sm text-white/70 leading-relaxed">{log.caption}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-        </div>
-      </main>
+          </div>
+        </main>
+      </div>
     </div>
-  </div>
-);
+  );
 }
