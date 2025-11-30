@@ -641,6 +641,8 @@ export default function App() {
     }
   };
 
+  const [modelMode, setModelMode] = useState('fast'); // 'fast' | 'deep'
+
   const handleSendMessage = async () => {
     if (!inputText.trim() || !user) return;
 
@@ -669,27 +671,49 @@ export default function App() {
       const sessionRef = doc(db, `artifacts/${appId}/users/${userId}/cbt_sessions/current_session`);
       await setDoc(sessionRef, { history: updatedMessages }, { merge: true });
 
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      let aiContent = "";
 
-      const response = await fetchWithBackoff(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [
-              { role: 'user', parts: [{ text: SYSTEM_INSTRUCTION }] },
-              ...updatedMessages.map(m => ({
-                role: m.role === 'user' ? 'user' : 'model',
-                parts: [{ text: m.content }]
-              }))
-            ]
-          })
+      // 1. Try Groq (Fast)
+      if (modelMode === 'fast') {
+        if (userSettings?.groqKey) {
+          try {
+            aiContent = await callGroqAPI(updatedMessages, userSettings.groqKey);
+          } catch (e) {
+            console.error("Groq Failed:", e);
+            setError("Fast mode failed. Check your Groq Key in Settings.");
+            setLoading(false);
+            return;
+          }
+        } else {
+          setError("Groq API Key missing. Please add it in Settings.");
+          setLoading(false);
+          return;
         }
-      );
+      }
+      // 2. Try Deepseek (Deep)
+      else if (modelMode === 'deep') {
+        if (userSettings?.deepseekKey) {
+          try {
+            aiContent = await callDeepseekAPI(updatedMessages, userSettings.deepseekKey);
+          } catch (e) {
+            console.error("Deepseek Failed:", e);
+            setError("Deep mode failed. Check your Deepseek Key in Settings.");
+            setLoading(false);
+            return;
+          }
+        } else {
+          setError("Deepseek API Key missing. Please add it in Settings.");
+          setLoading(false);
+          return;
+        }
+      }
+      // 3. Fallback / Legacy (Gemini) - Only if explicitly requested or as a safety net? 
+      // For V2.0 spec, we stick to the requested logic: User Keys Priority.
+      // If we want a fallback, we could add it here, but the spec says "prioritize User Keys > Error if missing".
 
-      const data = await response.json();
-      const aiContent = data.candidates?.[0]?.content?.parts?.[0]?.text || "I'm having trouble thinking right now.";
+      if (!aiContent) {
+        throw new Error("No response generated.");
+      }
 
       const aiMessage = { role: 'model', content: aiContent };
       const finalMessages = [...updatedMessages, aiMessage];
@@ -698,7 +722,7 @@ export default function App() {
 
     } catch (err) {
       console.error("LLM Error:", err);
-      setError("Failed to get response from AI.");
+      setError("Failed to get response from AI: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -712,7 +736,8 @@ export default function App() {
           await new Promise(r => setTimeout(r, delay));
           return fetchWithBackoff(url, options, retries - 1, delay * 2);
         }
-        throw new Error(`API Error: ${res.statusText}`);
+        const errorText = await res.text();
+        throw new Error(`API Error: ${res.status} - ${errorText}`);
       }
       return res;
     } catch (err) {
@@ -722,6 +747,47 @@ export default function App() {
       }
       throw err;
     }
+  };
+
+  const callGroqAPI = async (messages, apiKey) => {
+    const response = await fetchWithBackoff('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'llama3-70b-8192',
+        messages: [
+          { role: 'system', content: SYSTEM_INSTRUCTION },
+          ...messages
+        ],
+        temperature: 0.6,
+        max_tokens: 1024
+      })
+    });
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content;
+  };
+
+  const callDeepseekAPI = async (messages, apiKey) => {
+    const response = await fetchWithBackoff('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: [
+          { role: 'system', content: SYSTEM_INSTRUCTION },
+          ...messages
+        ],
+        temperature: 0.7
+      })
+    });
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content;
   };
 
   const handleNewSession = async () => {
@@ -945,8 +1011,7 @@ export default function App() {
             {[
               { id: 'coach', icon: MessageSquare, label: 'Coach' },
               { id: 'mood', icon: Activity, label: 'Mood' },
-              { id: 'insights', icon: BarChart2, label: 'Insights' },
-              { id: 'breathing', icon: Wind, label: 'Breathe' }
+              { id: 'settings', icon: Settings, label: 'Settings' }
             ].map(tab => (
               <button
                 key={tab.id}
@@ -971,128 +1036,107 @@ export default function App() {
               </div>
             )}
 
-            {view === 'breathing' && <BreathingExercise />}
-
-            {view === 'insights' && <InsightsView logs={moodLogs} />}
+            {view === 'settings' && (
+              <SettingsView settings={userSettings} onSave={handleSaveSettings} loading={loading} />
+            )}
 
             {view === 'coach' && (
-              <>
-                <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide">
-                  {messages.length === 0 && (
-                    <div className="h-full flex flex-col items-center justify-center text-center p-6 text-white/60">
-                      <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mb-4 backdrop-blur-sm">
-                        <MessageSquare className="w-8 h-8 opacity-50" />
-                      </div>
-                      <p className="text-lg font-medium text-white/80">Hello.</p>
-                      <p className="text-sm mt-2 max-w-[200px]">I'm here to help you work through your thoughts.</p>
+              <div className="flex flex-col h-full">
+                {/* Model Selector */}
+                <div className="flex items-center justify-center p-2 border-b border-white/10">
+                  <div className="flex bg-black/20 rounded-lg p-1">
+                    <button
+                      onClick={() => setModelMode('fast')}
+                      className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${modelMode === 'fast' ? 'bg-white/20 text-white shadow-sm' : 'text-white/50 hover:text-white/80'}`}
+                    >
+                      Fast (Groq)
+                    </button>
+                    <button
+                      onClick={() => setModelMode('deep')}
+                      className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${modelMode === 'deep' ? 'bg-white/20 text-white shadow-sm' : 'text-white/50 hover:text-white/80'}`}
+                    >
+                      Deep (Deepseek)
+                    </button>
+                  </div>
+                </div>
 
-                      {/* Daily Quote */}
-                      <div className="mt-8 p-4 glass-card rounded-xl max-w-xs">
-                        <p className="text-xs font-serif italic text-white/80">"{dailyQuote}"</p>
-                      </div>
-
-                      {/* Daily Check-in Prompt */}
-                      {showDailyCheckin && (
-                        <div className="mt-6 flex flex-col gap-2 w-full max-w-xs animate-in fade-in slide-in-from-bottom-4 duration-700">
-                          <button
-                            onClick={() => setView('mood')}
-                            className="w-full px-4 py-3 bg-indigo-500/80 hover:bg-indigo-500 text-white text-sm rounded-xl transition-colors flex items-center justify-center gap-2 shadow-lg backdrop-blur-sm"
-                          >
-                            <Activity className="w-4 h-4" />
-                            Log your daily mood
-                          </button>
-                          <button
-                            onClick={dismissCheckin}
-                            className="text-xs text-white/40 hover:text-white/60 transition-colors py-1"
-                          >
-                            Dismiss for today
-                          </button>
+                {/* Chat Area */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {messages.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center opacity-60">
+                      <MessageSquare className="w-12 h-12 mb-4 text-white/40" />
+                      <p className="text-lg font-medium">How are you feeling?</p>
+                      <p className="text-sm">I'm here to listen and help.</p>
+                    </div>
+                  ) : (
+                    messages.map((msg, idx) => (
+                      <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[80%] p-3 rounded-2xl ${msg.role === 'user'
+                          ? 'bg-indigo-500/80 text-white rounded-br-none'
+                          : 'bg-white/10 backdrop-blur-md text-white/90 rounded-bl-none'
+                          }`}>
+                          {msg.content}
                         </div>
-                      )}
-                    </div>
-                  )}
-
-                  {messages.map((msg, idx) => (
-                    <div key={idx} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                      <div className={`max-w-[85%] p-4 rounded-2xl text-sm leading-relaxed shadow-sm backdrop-blur-md border ${msg.role === 'user'
-                        ? 'bg-indigo-600/40 border-indigo-400/30 text-white rounded-br-none'
-                        : 'glass-card text-white/90 rounded-bl-none'
-                        }`}>
-                        {msg.content}
                       </div>
-                      {msg.role === 'model' && (
-                        <button
-                          onClick={() => speakMessage(msg.content)}
-                          className="mt-1 ml-2 text-white/40 hover:text-white/80 transition-colors"
-                        >
-                          <Volume2 className="w-3 h-3" />
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                    ))
+                  )}
                   {loading && (
                     <div className="flex justify-start">
-                      <div className="bg-white/10 border border-white/20 p-4 rounded-2xl rounded-bl-none flex gap-2 items-center">
-                        <div className="w-2 h-2 bg-white/50 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                        <div className="w-2 h-2 bg-white/50 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                        <div className="w-2 h-2 bg-white/50 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                      <div className="bg-white/10 backdrop-blur-md p-3 rounded-2xl rounded-bl-none flex gap-2 items-center">
+                        <div className="w-2 h-2 bg-white/50 rounded-full animate-bounce" />
+                        <div className="w-2 h-2 bg-white/50 rounded-full animate-bounce delay-100" />
+                        <div className="w-2 h-2 bg-white/50 rounded-full animate-bounce delay-200" />
                       </div>
                     </div>
                   )}
                   <div ref={messagesEndRef} />
                 </div>
 
+                {/* Input Area */}
                 <div className="p-4 bg-black/10 backdrop-blur-md border-t border-white/10">
                   <div className="flex gap-2">
                     <button
                       onClick={handleNewSession}
-                      className="p-3 rounded-xl glass-button text-white/70"
+                      className="glass-icon-button"
+                      title="New Session"
                     >
                       <Plus className="w-5 h-5" />
                     </button>
-                    <input
-                      type="text"
-                      value={inputText}
-                      onChange={(e) => setInputText(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                      placeholder="Type your thought..."
-                      className="flex-1 glass-input rounded-xl px-4 py-3 text-white placeholder:text-white/40"
-                      disabled={loading}
-                    />
-                    <button
-                      onClick={toggleListening}
-                      className={`p-3 rounded-xl border border-white/10 transition-colors ${isListening ? 'bg-red-500/50 text-white animate-pulse' : 'bg-white/5 text-white/70 hover:bg-white/10'
-                        }`}
-                    >
-                      {isListening ? (
-                        <div className="relative">
-                          <span className="absolute inset-0 rounded-xl bg-red-500/50 animate-ping"></span>
-                          <MicOff className="w-5 h-5 relative z-10" />
-                        </div>
-                      ) : (
-                        <Mic className="w-5 h-5" />
-                      )}
-                    </button>
-                    {isSpeaking && (
+                    <div className="flex-1 relative">
+                      <input
+                        type="text"
+                        value={inputText}
+                        onChange={(e) => setInputText(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                        placeholder="Type a message..."
+                        className="w-full glass-input h-10 pl-4 pr-10 rounded-full text-sm"
+                        disabled={loading}
+                      />
                       <button
-                        onClick={stopSpeaking}
-                        className="p-3 rounded-xl bg-red-500/20 hover:bg-red-500/40 border border-red-500/30 text-red-100 transition-colors animate-pulse"
-                        title="Stop Speaking"
+                        onClick={toggleListening}
+                        className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full transition-colors ${isListening ? 'bg-red-500/50 text-white' : 'hover:bg-white/10 text-white/60'
+                          }`}
                       >
-                        <Volume2 className="w-5 h-5" />
+                        {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
                       </button>
-                    )}
+                    </div>
                     <button
                       onClick={handleSendMessage}
-                      disabled={!inputText.trim() || loading}
-                      className="p-3 rounded-xl glass-button text-white shadow-lg"
+                      disabled={loading || !inputText.trim()}
+                      className="glass-button w-10 h-10 rounded-full flex items-center justify-center disabled:opacity-50"
                     >
-                      <Send className="w-5 h-5" />
+                      <Send className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
-              </>
+              </div>
             )}
+
+            {view === 'breathing' && <BreathingExercise />}
+
+            {view === 'insights' && <InsightsView logs={moodLogs} />}
+
+
 
             {view === 'mood' && (
               <div className="flex flex-col h-full">
