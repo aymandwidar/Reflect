@@ -693,36 +693,82 @@ export default function App() {
 
       let aiContent = "";
 
-      // 1. Try Groq (Fast)
+      // 1. Try Groq (Fast) - Note: May fail due to CORS in browser
       if (modelMode === 'fast') {
         if (userSettings?.groqKey) {
           try {
             aiContent = await callGroqAPI(updatedMessages, userSettings.groqKey);
           } catch (e) {
             console.error("Groq Failed:", e);
-            setError("Fast mode failed. Check your Groq Key in Settings.");
+            // Fallback to Gemini if Groq fails (likely CORS issue)
+            if (userSettings?.geminiKey) {
+              console.log("Falling back to Gemini...");
+              try {
+                aiContent = await callGeminiAPI(updatedMessages, userSettings.geminiKey);
+              } catch (geminiErr) {
+                console.error("Gemini Fallback Failed:", geminiErr);
+                setError("Fast mode failed. CORS issue - Groq doesn't work from browser. Use Gemini key instead.");
+                setLoading(false);
+                return;
+              }
+            } else {
+              setError("Fast mode failed (CORS issue). Please add a Gemini API Key in Settings as fallback.");
+              setLoading(false);
+              return;
+            }
+          }
+        } else if (userSettings?.geminiKey) {
+          // Use Gemini directly if no Groq key
+          try {
+            aiContent = await callGeminiAPI(updatedMessages, userSettings.geminiKey);
+          } catch (e) {
+            console.error("Gemini Failed:", e);
+            setError("Failed to get response. Check your Gemini Key in Settings.");
             setLoading(false);
             return;
           }
         } else {
-          setError("Groq API Key missing. Please add it in Settings.");
+          setError("No API Key found. Please add Groq or Gemini API Key in Settings.");
           setLoading(false);
           return;
         }
       }
-      // 2. Try Deepseek (Deep)
+      // 2. Try Deepseek (Deep) - Note: May fail due to CORS in browser
       else if (modelMode === 'deep') {
         if (userSettings?.deepseekKey) {
           try {
             aiContent = await callDeepseekAPI(updatedMessages, userSettings.deepseekKey);
           } catch (e) {
             console.error("Deepseek Failed:", e);
-            setError("Deep mode failed. Check your Deepseek Key in Settings.");
+            // Fallback to Gemini if Deepseek fails (likely CORS issue)
+            if (userSettings?.geminiKey) {
+              console.log("Falling back to Gemini...");
+              try {
+                aiContent = await callGeminiAPI(updatedMessages, userSettings.geminiKey);
+              } catch (geminiErr) {
+                console.error("Gemini Fallback Failed:", geminiErr);
+                setError("Deep mode failed. CORS issue - Deepseek doesn't work from browser. Use Gemini key instead.");
+                setLoading(false);
+                return;
+              }
+            } else {
+              setError("Deep mode failed (CORS issue). Please add a Gemini API Key in Settings as fallback.");
+              setLoading(false);
+              return;
+            }
+          }
+        } else if (userSettings?.geminiKey) {
+          // Use Gemini directly if no Deepseek key
+          try {
+            aiContent = await callGeminiAPI(updatedMessages, userSettings.geminiKey);
+          } catch (e) {
+            console.error("Gemini Failed:", e);
+            setError("Failed to get response. Check your Gemini Key in Settings.");
             setLoading(false);
             return;
           }
         } else {
-          setError("Deepseek API Key missing. Please add it in Settings.");
+          setError("No API Key found. Please add Deepseek or Gemini API Key in Settings.");
           setLoading(false);
           return;
         }
@@ -821,6 +867,31 @@ export default function App() {
     });
     const data = await response.json();
     return data.choices?.[0]?.message?.content;
+  };
+
+  const callGeminiAPI = async (messages, apiKey) => {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          { role: 'user', parts: [{ text: SYSTEM_INSTRUCTION }] },
+          ...messages.map(m => ({
+            role: m.role === 'user' ? 'user' : 'model',
+            parts: [{ text: m.content }]
+          }))
+        ]
+      })
+    });
+
+    const data = await response.json();
+
+    if (!data.candidates || !data.candidates[0]) {
+      console.error("Gemini API Error Response:", data);
+      throw new Error(data.error?.message || "Invalid response from Gemini API");
+    }
+
+    return data.candidates[0].content.parts[0].text;
   };
 
   const handleNewSession = async () => {
