@@ -793,7 +793,14 @@ export default function App() {
       })
     });
     const data = await response.json();
-    return data.choices?.[0]?.message?.content;
+
+    // Log the full response for debugging
+    if (!data.choices || !data.choices[0]) {
+      console.error("Groq API Error Response:", data);
+      throw new Error(data.error?.message || "Invalid response from Groq API");
+    }
+
+    return data.choices[0].message.content;
   };
 
   const callDeepseekAPI = async (messages, apiKey) => {
