@@ -865,37 +865,6 @@ export default function App() {
         temperature: 0.7
       })
     });
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content;
-  };
-
-  const callGeminiAPI = async (messages, apiKey) => {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
-          { role: 'user', parts: [{ text: SYSTEM_INSTRUCTION }] },
-          ...messages.map(m => ({
-            role: m.role === 'user' ? 'user' : 'model',
-            parts: [{ text: m.content }]
-          }))
-        ]
-      })
-    });
-
-    const data = await response.json();
-
-    if (!data.candidates || !data.candidates[0]) {
-      console.error("Gemini API Error Response:", data);
-      throw new Error(data.error?.message || "Invalid response from Gemini API");
-    }
-
-    return data.candidates[0].content.parts[0].text;
-  };
-
-  const handleNewSession = async () => {
-    if (!user) return;
     if (!confirm("Start a new session? Current chat will be archived.")) return;
 
     setLoading(true);
