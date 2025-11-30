@@ -367,7 +367,7 @@ export default function App() {
       setShowDailyCheckin(shouldCheckIn);
 
       // Local Notification
-      if (shouldCheckIn && Notification.permission === "granted") {
+      if (shouldCheckIn && 'Notification' in window && Notification.permission === "granted") {
         const lastNotified = localStorage.getItem('reflect_last_notified');
         if (!lastNotified || !isSameDay(new Date(lastNotified), new Date())) {
           new Notification("Reflect", { body: "Time to check in with yourself." });

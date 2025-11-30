@@ -10,14 +10,6 @@
 
 <body>
   <div id="root"></div>
-  <script>
-    window.onerror = function (message, source, lineno, colno, error) {
-      alert('Error: ' + message + '\nSource: ' + source + '\nLine: ' + lineno);
-    };
-    window.onunhandledrejection = function (event) {
-      alert('Unhandled Promise Rejection: ' + event.reason);
-    };
-  </script>
   <script type="module" src="/src/main.jsx"></script>
 </body>
 
