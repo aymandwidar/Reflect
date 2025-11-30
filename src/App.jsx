@@ -682,23 +682,14 @@ export default function App() {
     setInputText('');
     setLoading(true);
 
-    if (demoMode) {
-      setTimeout(() => {
-        const aiMessage = {
-          role: 'model',
-          content: "I'm in Demo Mode. I can't really think, but I hear you saying: \"" + newMessage.content + "\". How does that make you feel?"
-        };
-        setMessages([...updatedMessages, aiMessage]);
-        setLoading(false);
-      }, 1000);
-      return;
-    }
-
     try {
-      const appId = import.meta.env.VITE_FIREBASE_APP_ID;
-      const userId = user.uid;
-      const sessionRef = doc(db, `artifacts/${appId}/users/${userId}/cbt_sessions/current_session`);
-      await setDoc(sessionRef, { history: updatedMessages }, { merge: true });
+      // Save to Firestore if not in demo mode
+      if (!demoMode) {
+        const appId = import.meta.env.VITE_FIREBASE_APP_ID;
+        const userId = user.uid;
+        const sessionRef = doc(db, `artifacts/${appId}/users/${userId}/cbt_sessions/current_session`);
+        await setDoc(sessionRef, { history: updatedMessages }, { merge: true });
+      }
 
       let aiContent = "";
 
@@ -736,9 +727,6 @@ export default function App() {
           return;
         }
       }
-      // 3. Fallback / Legacy (Gemini) - Only if explicitly requested or as a safety net? 
-      // For V2.0 spec, we stick to the requested logic: User Keys Priority.
-      // If we want a fallback, we could add it here, but the spec says "prioritize User Keys > Error if missing".
 
       if (!aiContent) {
         throw new Error("No response generated.");
@@ -747,7 +735,16 @@ export default function App() {
       const aiMessage = { role: 'model', content: aiContent };
       const finalMessages = [...updatedMessages, aiMessage];
 
-      await setDoc(sessionRef, { history: finalMessages }, { merge: true });
+      // Save final messages to Firestore if not in demo mode
+      if (!demoMode) {
+        const appId = import.meta.env.VITE_FIREBASE_APP_ID;
+        const userId = user.uid;
+        const sessionRef = doc(db, `artifacts/${appId}/users/${userId}/cbt_sessions/current_session`);
+        await setDoc(sessionRef, { history: finalMessages }, { merge: true });
+      } else {
+        // In demo mode, just update local state
+        setMessages(finalMessages);
+      }
 
     } catch (err) {
       console.error("LLM Error:", err);
