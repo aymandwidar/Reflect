@@ -12,22 +12,22 @@
 
 @layer components {
     .glass-panel {
-        @apply bg-white/10 backdrop-blur-xl border border-white/20 shadow-xl;
+        @apply bg-white/20 backdrop-blur-lg border border-white/20 shadow-xl;
     }
 
     .glass-card {
-        @apply bg-white/5 backdrop-blur-md border border-white/10 shadow-sm hover:bg-white/10 transition-all duration-300;
+        @apply bg-white/10 backdrop-blur-md border border-white/10 shadow-sm hover:bg-white/20 transition-all duration-300;
     }
 
     .glass-button {
-        @apply bg-white/10 hover:bg-white/20 border border-white/20 backdrop-blur-sm transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed;
+        @apply bg-white/20 hover:bg-white/30 border border-white/20 backdrop-blur-md transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium;
     }
 
     .glass-input {
-        @apply bg-black/20 border border-white/10 focus:border-white/30 focus:bg-black/30 backdrop-blur-sm transition-all outline-none placeholder:text-white/40;
+        @apply bg-black/20 border border-white/10 focus:border-white/30 focus:bg-black/30 backdrop-blur-md transition-all outline-none placeholder:text-white/40 text-white;
     }
 
     .glass-icon-button {
-        @apply p-2 hover:bg-white/10 rounded-full transition-colors active:scale-90;
+        @apply p-2 hover:bg-white/20 rounded-full transition-colors active:scale-90 text-white/80 hover:text-white;
     }
 }
